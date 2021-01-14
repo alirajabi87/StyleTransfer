@@ -1,3 +1,3 @@
 # StyleTransfer
 
-Style transfor based on tensorflow-2 and keras
+Style transfer based on tensorflow-2 and keras
