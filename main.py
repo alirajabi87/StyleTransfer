@@ -1,12 +1,12 @@
 # Style Transfer Leaning
 import os
 
-# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import tensorflow as tf
 from tensorflow.keras.layers import Input, Lambda, Dense, Flatten, AveragePooling2D, MaxPooling2D, Conv2D
 from tensorflow.keras.models import Model, Sequential
-from tensorflow.keras.applications.vgg16 import VGG16, preprocess_input
+from tensorflow.keras.applications.vgg19 import VGG19, preprocess_input
 from tensorflow.keras.preprocessing.image import ImageDataGenerator, load_img
 from tensorflow.keras.preprocessing import image
 
@@ -18,7 +18,6 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 from StyleContentModel import StyleContentModel
 
-
 mpl.rcParams['figure.figsize'] = (12, 12)
 mpl.rcParams['axes.grid'] = False
 
@@ -27,8 +26,8 @@ import functools
 from datetime import datetime
 
 
-def VGG16_AvgPool(shape):
-    vgg = VGG16(input_shape=shape, weights='imagenet', include_top=False)
+def VGG19_AvgPool(shape):
+    vgg = VGG19(input_shape=shape, weights='imagenet', include_top=False)
 
     new_model = Sequential()
     for layer in vgg.layers:
@@ -42,11 +41,11 @@ def VGG16_AvgPool(shape):
     return new_model
 
 
-def VGG16_AvgPool_Cutoff(shape, num_conv):
+def VGG19_AvgPool_Cutoff(shape, num_conv):
     if num_conv < 1 or num_conv > 13:
         print("Number of Convelution layers should be in range [1, 13]")
         return None
-    model = VGG16_AvgPool(shape)
+    model = VGG19_AvgPool(shape)
     new_model = Sequential()
     n = 0
     for layer in model.layers:
@@ -76,7 +75,7 @@ def scale_img(x):
 
 
 def tensor_to_image(tensor):
-    tensor += 255
+    tensor = tensor + 255
     tensor = np.array(tensor, dtype=np.uint8)
     if np.ndim(tensor) > 3:
         assert tensor.shape[0] == 1
@@ -112,7 +111,7 @@ def imshow(image, title=None):
 
 def vgg_layers(layer_names):
     red_model = Sequential()
-    vgg = tf.keras.applications.vgg16.VGG16(include_top=False, weights='imagenet')
+    vgg = tf.keras.applications.vgg19.VGG19(include_top=False, weights='imagenet')
     vgg.trainable = False
     for layer in vgg.layers:
         if layer.__class__ == MaxPooling2D:
@@ -124,9 +123,38 @@ def vgg_layers(layer_names):
     return model
 
 
+def clip_0_1(img):
+    return tf.clip_by_value(image, clip_value_min=0.0, clip_value_max=1.0)
+
+
+def total_loss(outputs):
+    style_outputs = outputs['style']
+    content_outputs = outputs['content']
+    style_loss = tf.add_n([tf.reduce_mean((style_outputs[name] - style_target[name]) ** 2)
+                           for name in style_outputs.keys()])
+    style_loss *= style_weight / num_style_leyers
+
+    content_loss = tf.add_n([tf.reduce_mean((content_outputs[name] - content_target[name])**2)
+                             for name in content_outputs.keys()])
+    content_loss *= content_weight / num_content_layers
+
+    loss = style_loss + content_loss
+    return loss
+
+
+@tf.function()
+def train_step(image):
+    with tf.GradientTape() as tape:
+        outputs = extractor(image)
+        loss = total_loss(outputs)
+    grad = tape.gradient(loss, image)
+    optimizer.apply_gradients([(grad, image)])
+    image.assign(clip_0_1(image))
+
+
 if __name__ == '__main__':
-    content_path = "../DATA/YellowLabradorLooking_new.jpg"
-    style_path = "../DATA/Vassily_Kandinsky,_1913_-_Composition_7.jpg"
+    content_path = "../DATA/eindhoven.jpg"#"../DATA/YellowLabradorLooking_new.jpg"
+    style_path = "../DATA/Starry-Night-canvas-Vincent-van-Gogh-New-1889.jpg"#"../DATA/Vassily_Kandinsky,_1913_-_Composition_7.jpg"
 
     content_image = load_img(content_path)
     style_image = load_img(style_path)
@@ -143,22 +171,22 @@ if __name__ == '__main__':
         f"Content image max: {tf.math.reduce_max(content_image)}, content image min: {tf.math.reduce_min(content_image)}")
     print(f"Style image max: {tf.math.reduce_max(style_image)}, Style image min: {tf.math.reduce_min(style_image)}")
 
-    # Test VGG16 for the Content image
-    x = tf.keras.applications.vgg16.preprocess_input(content_image * 255)
+    # Test VGG19 for the Content image
+    x = tf.keras.applications.vgg19.preprocess_input(content_image * 255)
     x = tf.image.resize(x, (224, 224))
-    vgg = tf.keras.applications.vgg16.VGG16(include_top=True, weights='imagenet')
+    vgg = tf.keras.applications.vgg19.VGG19(include_top=True, weights='imagenet')
     pred = vgg(x)
     # print(f" prediction probability: {pred}, Shape: {pred.shape}")
 
-    prediction_top_5 = tf.keras.applications.vgg16.decode_predictions(pred.numpy(), top=5)[0]
+    prediction_top_5 = tf.keras.applications.vgg19.decode_predictions(pred.numpy(), top=5)[0]
 
     list_pred = [(class_name, prob) for (number, class_name, prob) in prediction_top_5]
     print(list_pred)
 
     shape = (224, 224, 3)
     print(content_image.shape)
-    vgg = VGG16_AvgPool(content_image.shape[1:])
-    print(vgg.summary())
+    vgg = VGG19_AvgPool(content_image.shape[1:])
+    # print(vgg.summary())
 
     content_layers = ['block5_conv2']
     style_leyers = ['block1_conv2',
@@ -170,30 +198,82 @@ if __name__ == '__main__':
     num_style_leyers = len(style_leyers)
 
     style_extractor = vgg_layers(style_leyers)
-    style_output = style_extractor(style_image*255)
+    style_output = style_extractor(style_image * 255)
 
-    for name, output in zip(style_leyers, style_output):
-        print(name)
-        print(f" Shape: {output.numpy().shape }")
-        print(f" min: {output.numpy().min() }")
-        print(f" max: {output.numpy().max() }")
-        print(f" mean: {output.numpy().mean() }")
-        print("-------------------------------------------")
+    # for name, output in zip(style_leyers, style_output):
+    #     print(name)
+    #     print(f" Shape: {output.numpy().shape}")
+    #     print(f" min: {output.numpy().min()}")
+    #     print(f" max: {output.numpy().max()}")
+    #     print(f" mean: {output.numpy().mean()}")
+    #     print("-------------------------------------------")
     extractor = StyleContentModel(style_leyers, content_layers, vgg_layers)
-    results = extractor(tf.constant(content_image))
-    print("Style: ")
-    for name, output in sorted(results['style'].items()):
-        print("  ", name)
-        print("    shape: ", output.numpy().shape)
-        print("    min: ", output.numpy().min())
-        print("    max: ", output.numpy().max())
-        print("    mean: ", output.numpy().mean())
-        print()
+    # results = extractor(tf.constant(content_image))
+    # print("Style: ")
+    # for name, output in sorted(results['style'].items()):
+    #     print("  ", name)
+    #     print("    shape: ", output.numpy().shape)
+    #     print("    min: ", output.numpy().min())
+    #     print("    max: ", output.numpy().max())
+    #     print("    mean: ", output.numpy().mean())
+    #     print()
+    #
+    # print("Contents:")
+    # for name, output in sorted(results['content'].items()):
+    #     print("  ", name)
+    #     print("    shape: ", output.numpy().shape)
+    #     print("    min: ", output.numpy().min())
+    #     print("    max: ", output.numpy().max())
+    #     print("    mean: ", output.numpy().mean())
 
-    print("Contents:")
-    for name, output in sorted(results['content'].items()):
-        print("  ", name)
-        print("    shape: ", output.numpy().shape)
-        print("    min: ", output.numpy().min())
-        print("    max: ", output.numpy().max())
-        print("    mean: ", output.numpy().mean())
+    # Gradient Descent
+    style_target = extractor(style_image)['style']
+    content_target = extractor(content_image)['content']
+
+    image = tf.Variable(content_image)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, beta_1=0.99, epsilon=1.0)  # also LBFGS
+    """
+    tfp.optimizer.lbfgs_minimize(
+    value_and_gradients_function, initial_position, previous_optimizer_results=None,
+    num_correction_pairs=10, tolerance=1e-08, x_tolerance=0, f_relative_tolerance=0,
+    initial_inverse_hessian_estimate=None, max_iterations=50, parallel_iterations=1,
+    stopping_condition=None, max_line_search_iterations=50, name=None)
+    """
+    # For total loss, a weight combination of two losses is required
+    style_weight = 1e-2
+    content_weight = 1e4
+
+    epochs = 10
+    step_per_epochs = 200
+    t0 = datetime.now()
+    step = 0
+    for n in range(epochs):
+        print(f"epoch: {n+1}")
+        for m in range(step_per_epochs):
+            step +=1
+            train_step(image)
+            print(".", end='')
+        tensor_to_image(image)
+        print(f">> Train steps: {step} ")
+        step = 0
+    imshow(image, "Styled Image")
+    plt.show()
+    t_end = datetime.now()
+    print(f"Total time: {t_end - t0}")
+
+    x_delta, y_delta = extractor.high_pass_x_y(content_image)
+    x_delta, y_delta = extractor.high_pass_x_y(image)
+
+    plt.figure(figsize=(14,10))
+    plt.subplot(2,2,1)
+    imshow(clip_0_1(2*y_delta+0.5), "Horizontal Delta: Original")
+
+    plt.subplot(2,2,2)
+    imshow(clip_0_1(2*x_delta+0.5), "Vertical Delta: Original")
+
+    plt.subplot(2, 2, 3)
+    imshow(clip_0_1(2 * y_delta + 0.5), "Horizontal Delta: Styled")
+
+    plt.subplot(2, 2, 4)
+    imshow(clip_0_1(2 * x_delta + 0.5), "Vertical Delta: Styled")
+    plt.show()

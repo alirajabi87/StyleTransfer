@@ -26,14 +26,21 @@ class StyleContentModel(tf.keras.Model):
         if tf.math.reduce_max(inputs) <= 1:
             inputs = inputs * 255.0
 
-        preprocessed_input = tf.keras.applications.vgg16.preprocess_input(inputs)
-        outputs = self.vgg(preprocessed_input)
-        style_outputs, content_output = (outputs[:self.num_style_layers],
-                                         outputs[self.num_style_layers:])
+        preprocessed_input1 = tf.keras.applications.vgg16.preprocess_input(inputs)
+        outputs = self.vgg(preprocessed_input1)
+        style_outputs, content_outputs = (outputs[:self.num_style_layers],
+                                          outputs[self.num_style_layers:])
 
         style_outputs = [self.gram_matrix(style_output) for style_output in style_outputs]
-        content_dict = {content_name:value
-                        for content_name, value in zip(self.content_layers, content_output)}
+
+        content_dict = {content_name: value
+                        for content_name, value in zip(self.content_layers, content_outputs)}
         style_dict = {style_name: value
                       for style_name, value in zip(self.style_layers, style_outputs)}
         return {'content': content_dict, 'style': style_dict}
+
+
+    def high_pass_x_y(self, image):
+        x_var = image[:, :, 1:, :] - image[:, :, :-1, :]
+        y_var = image[:, 1:, :, :] - image[:, :-1, :, :]
+        return x_var, y_var
